@@ -6,6 +6,8 @@ import { clerkWebhooks } from "./controllers/webhooks.js";
 import educatorRouter from "./routes/educatorRoutes.js";
 import { clerkMiddleware } from "@clerk/express";
 import connectCloudinary from "./configs/cloudinary.js";
+import courseRouter from "./routes/courseRoutes.js";
+import userRouter from "./routes/userRoutes.js";
 
 //Initialize Express
 const app = express();
@@ -30,6 +32,12 @@ app.post('/clerk', express.json(), clerkWebhooks);
 
 //Educator Routes
 app.use('/api/educator' , express.json() , educatorRouter)
+
+//Course Routes
+app.use('/api/course', express.json(), courseRouter);
+
+//User Routes
+app.use('/api/user', express.json(), userRouter)
 
 
 

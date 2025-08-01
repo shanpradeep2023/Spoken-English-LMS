@@ -73,7 +73,7 @@ const courseSchema = new mongoose.Schema(
       type: String,
     },
 
-    coursePrices: {
+    coursePrice: {
       type: Number,
       required: true,
     },
