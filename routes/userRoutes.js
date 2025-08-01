@@ -1,6 +1,6 @@
 import express from "express";
 import { getUserData, purchaseLink, userEnrolledCourses } from "../controllers/userController.js";
-import { createRazorpayOrder, razorpayWebhook, verifyRazorpayPayment } from "../razorpay.js";
+// import { createRazorpayOrder, razorpayWebhook, verifyRazorpayPayment } from "../razorpay.js";
 
 const userRouter = express.Router();
 
@@ -11,9 +11,9 @@ userRouter.get('/enrolled-courses', userEnrolledCourses);
 userRouter.post('/purchase', purchaseLink);
 
 
-// Razorpay
-userRouter.post('/purchase-order', createRazorpayOrder)
-userRouter.post('/purchase-verify', verifyRazorpayPayment)
-userRouter.post('/purchase-webhook', razorpayWebhook)
+// // Razorpay
+// userRouter.post('/purchase-order', createRazorpayOrder)
+// userRouter.post('/purchase-verify', verifyRazorpayPayment)
+// userRouter.post('/purchase-webhook', razorpayWebhook)
 
 export default userRouter;
