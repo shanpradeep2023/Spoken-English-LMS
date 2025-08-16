@@ -14,4 +14,10 @@ educatorRouter.get('/get-courses', requireAuth() , protectEducator, getCoursesBy
 educatorRouter.get('/dashboard', requireAuth() , protectEducator, educatorDashboardData);
 educatorRouter.get('/enrolled-students', requireAuth() , protectEducator, getEnrolledStudentsData);
 
+
+// educatorRouter.get('/update-role' ,updateRoleToEducator);
+// educatorRouter.post('/add-course' , upload.single('image'), addCourse);
+// educatorRouter.get('/get-courses' , protectEducator, getCoursesByEducator);
+// educatorRouter.get('/dashboard' , protectEducator, educatorDashboardData);
+// educatorRouter.get('/enrolled-students' , protectEducator, getEnrolledStudentsData);
 export default educatorRouter;

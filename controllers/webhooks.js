@@ -1,8 +1,10 @@
 import { Webhook } from "svix";
+
+import crypto from "crypto";
 import User from "../models/User.js";
-import Stripe from "stripe";
-import Purchase from "../models/Purchase.js";
 import Course from "../models/Course.js";
+import Purchase from "../models/Purchase.js";
+import razorpay from "../configs/razorpay.js";
 
 // API Controller Function to manage Clerk user with db
 
@@ -56,73 +58,68 @@ export const clerkWebhooks = async (req, res) => {
   }
 };
 
-const stripeInstance = new Stripe(process.env.STRIPE_SECRET_KEY);
-
-export const stripeWebhooks = async (req, res) => {
-  const sig = req.headers["stripe-signature"];
-
-  let event;
-
+// Razorpay Webhook
+export const razorpayWebhook = async (req, res) => {
   try {
-    event = Stripe.webhooks.constructEvent(
-      req.body,
-      sig,
-      process.env.STRIPE_WEBHOOK_SECRET
-    );
+    const webhookSignature = req.headers["x-razorpay-signature"];
+    const expectedSignature = crypto
+      .createHmac("sha256", process.env.RAZORPAY_WEBHOOK_SECRET)
+      .update(JSON.stringify(req.body))
+      .digest("hex");
+
+    if (webhookSignature !== expectedSignature) {
+      return res
+        .status(400)
+        .json({ success: false, error: "Invalid webhook signature" });
+    }
+
+    const event = req.body; // already parsed by express.json()
+    if (event.event === "payment.captured") {
+      const payment = event.payload.payment.entity;
+      const orderId = payment.order_id;
+
+      const order = await razorpay.orders.fetch(orderId);
+      const purchaseId = order.receipt;
+      const { userId, courseId } = order.notes || {};
+
+      const purchase = await Purchase.findById(purchaseId);
+      const user = await User.findById(userId);
+      const course = await Course.findById(courseId);
+
+      if (purchase && user && course) {
+        if (!course.enrolledStudents.some((id) => id.equals(user._id))) {
+          course.enrolledStudents.push(user._id);
+          await course.save();
+        }
+        if (!user.enrolledCourses.some((id) => id.equals(course._id))) {
+          user.enrolledCourses.push(course._id);
+          await user.save();
+        }
+        purchase.status = "completed";
+        purchase.gatewayPaymentId = payment.id;
+        await purchase.save();
+      }
+
+    } else if (event.event === "payment.failed") {
+      const payment = event.payload.payment.entity;
+      const orderId = payment.order_id;
+      const order = await razorpay.orders.fetch(orderId);
+      const purchaseId = order.receipt;
+      const purchase = await Purchase.findById(purchaseId);
+      if (purchase) {
+        purchase.status = "failed";
+        purchase.gatewayPaymentId = payment.id;
+        await purchase.save();
+      }
+    }
+
+    // handle other events if you want:
+    // order.paid -> also indicates success
+
+    return res.json({ received: true });
   } catch (err) {
-    response.status(400).send(`Webhook Error: ${err.message}`);
+    return res
+      .status(500)
+      .json({ success: false, error: `Webhook error: ${err.message}` });
   }
-
-  // Handle the event
-  switch (event.type) {
-    case "payment_intent.succeeded":{
-      const paymentIntent = event.data.object;
-      const paymentIntentId = paymentIntent.id;
-
-      const session = await stripeInstance.checkout.sessions.list({
-        payment_intent: paymentIntentId
-      })
-
-      const { purchaseId } = session.data[0].metadata;
-
-      const purchaseData = await Purchase.findById(purchaseId);
-      const userData = User.findById(purchaseData.userId)
-      const courseData = await Course.findById(purchaseData.courseId.toString())
-
-
-      courseData.enrolledStudents.push(userData)
-      await courseData.save();
-
-      userData.enrolledCourses.push(courseData._id)
-      await userData.save();
-
-      purchaseData.status = 'completed';
-      await purchaseData.save();
-      
-
-      break;
-    }
-    case "payment_intent.payment_failed":{
-      const paymentIntent = event.data.object;
-      const paymentIntentId = paymentIntent.id;
-
-      const session = await stripeInstance.checkout.sessions.list({
-        payment_intent: paymentIntentId
-      })
-
-      const { purchaseId } = session.data[0].metadata;
-
-      const purchaseData = await Purchase.findById(purchaseId);
-      purchaseData.status = 'failed';
-      await purchaseData.save();
-
-      break;
-    }
-    // ... handle other event types
-    default:
-      console.log(`Unhandled event type ${event.type}`);
-  }
-
-  // Return a response to acknowledge receipt of the event
-  res.json({ received: true });
 };

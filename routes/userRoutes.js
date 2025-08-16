@@ -1,28 +1,31 @@
 import express from "express";
-import { addUserRating, getUserCourseProgress, getUserData, purchaseLink, updateUserCourseProgress, userEnrolledCourses } from "../controllers/userController.js";
-// import { createRazorpayOrder, razorpayWebhook, verifyRazorpayPayment } from "../razorpay.js";
+import {
+  addUserRating,
+  getUserCourseProgress,
+  getUserData,
+  purchaseLink,
+  updateUserCourseProgress,
+  userEnrolledCourses,
+  verifyRazorpayPayment,
+} from "../controllers/userController.js";
 
-import {requireAuth} from "@clerk/express";
+import { requireAuth } from "@clerk/express";
+import { verifyIfCourseAlreadyPurchased } from "../middlewares/purchaseVerifyMiddleware.js";
 
 const userRouter = express.Router();
 
-userRouter.get('/data', requireAuth() , getUserData);
-userRouter.get('/enrolled-courses', requireAuth() ,userEnrolledCourses);
+userRouter.get("/data", requireAuth(), getUserData);
+userRouter.get("/enrolled-courses", requireAuth(), userEnrolledCourses);
 
-// Stripe
-userRouter.post('/purchase', purchaseLink);
+// Razorpay
+userRouter.post("/purchase", requireAuth(), verifyIfCourseAlreadyPurchased, purchaseLink);
+userRouter.post("/purchase/verify", requireAuth(), verifyRazorpayPayment);
 
 // Progress Routes
-userRouter.post('/update-course-progress', requireAuth(), updateUserCourseProgress);
-userRouter.get('/get-course-progress', requireAuth(), getUserCourseProgress);
+userRouter.post("/update-course-progress", requireAuth(), updateUserCourseProgress);
+userRouter.get("/get-course-progress", requireAuth(), getUserCourseProgress);
 
 // Rating
-userRouter.post('/add-rating', requireAuth(), addUserRating)
-
-
-// // Razorpay
-// userRouter.post('/purchase-order', createRazorpayOrder)
-// userRouter.post('/purchase-verify', verifyRazorpayPayment)
-// userRouter.post('/purchase-webhook', razorpayWebhook)
+userRouter.post("/add-rating", requireAuth(), addUserRating);
 
 export default userRouter;

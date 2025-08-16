@@ -1,6 +1,8 @@
 import User from "../models/User.js";
 import Purchase from "../models/Purchase.js";
 import Stripe from "stripe";
+import crypto from "crypto";
+import razorpay from "../configs/razorpay.js";
 import Course from "../models/Course.js";
 import CourseProgress from "../models/CourseProgress.js";
 
@@ -42,65 +44,173 @@ export const userEnrolledCourses = async (req, res) => {
 };
 
 // Purchase link for user
+// export const purchaseLink = async (req, res) => {
+//   try {
+//     const { courseId } = req.body;
+//     const origin = req.headers.origin || "http://localhost:3000";
+//     const userId = req.auth.userId;
+
+// console.log(userId, courseId);
+
+//     const userData = await User.findById(userId);
+//     const courseData = await Course.findById(courseId);
+
+//     if (!userData) {
+//       return res.status(404).json({ success: false, error: "User not found" });
+//     }
+//     if (!courseData) {
+//       return res
+//         .status(404)
+//         .json({ success: false, error: "Course not found" });
+//     }
+
+//     const purchaseData = {
+//       courseId: courseData._id,
+//       userId: userData._id,
+//       amount: (
+//         courseData.coursePrice -
+//         (courseData.discount * courseData.coursePrice) / 100
+//       ).toFixed(2),
+//     };
+
+//     const newPurchase = await Purchase.create(purchaseData);
+
+//     //Stripe payment link creation
+//     const stripeInstance = new Stripe(process.env.STRIPE_SECRET_KEY);
+//     const currency = process.env.CURRENCY.toLowerCase();
+
+//     const line_items = [
+//       {
+//         price_data: {
+//           currency,
+//           product_data: {
+//             name: courseData.courseTitle,
+//           },
+//           unit_amount: Math.floor(purchaseData.amount * 100),
+//         },
+//         quantity: 1,
+//       },
+//     ];
+
+//     const session = await stripeInstance.checkout.sessions.create({
+//       success_url: `${origin}/loading/my-enrollments`,
+//       cancel_url: `${origin}/`,
+//       line_items: line_items,
+//       mode: "payment",
+//       metadata: {
+//         purchaseId: newPurchase._id.toString(),
+//         userId: userData._id.toString(),
+//       },
+//     });
+
+//     res.status(200).json({ success: true, sessionUrl: session.url });
+//   } catch (error) {
+//     res.status(500).json({
+//       success: false,
+//       error: `Error creating purchase link: ${error.message}`,
+//     });
+//   }
+// };
+
+// ------------- CREATE ORDER (instead of Stripe session) -------------
 export const purchaseLink = async (req, res) => {
   try {
     const { courseId } = req.body;
-    const origin = req.headers;
-    const userId = req.auth.userId;
-    const userData = await User.findById(userId);
-    const courseData = await Course.findById(courseId);
+    const userId = req.auth.userId;             // Clerk
+    const origin = req.headers.origin || "http://localhost:3000";
 
-    if (!userData || !courseData) {
-      return res
-        .status(404)
-        .json({ success: false, error: "User or Course not found" });
+    const user = await User.findById(userId);
+    const course = await Course.findById(courseId);
+    if (!user) return res.status(404).json({ success:false, error:"User not found" });
+    if (!course) return res.status(404).json({ success:false, error:"Course not found" });
+
+    const amountNumber = Number(
+      (course.coursePrice - (course.discount * course.coursePrice)/100).toFixed(2)
+    );
+    const amountPaise = Math.round(amountNumber * 100);   // Razorpay expects integer subunits
+
+    // Create a pending Purchase
+    const purchase = await Purchase.create({
+      courseId: course._id,
+      userId: user._id,
+      amount: amountNumber,
+      status: "pending",
+    });
+
+    // Create Razorpay order
+    const order = await razorpay.orders.create({
+      amount: amountPaise,
+      currency: process.env.CURRENCY || "INR",
+      receipt: purchase._id.toString(),         // store purchaseId here
+      notes: {
+        userId: user._id.toString(),
+        courseId: course._id.toString(),
+      },
+    });
+
+    // Return order details to frontend
+    return res.status(200).json({
+      success: true,
+      order: {
+        id: order.id,
+        amount: order.amount,
+        currency: order.currency,
+      },
+      keyId: process.env.RAZORPAY_KEY_ID,       // needed by Razorpay Checkout
+      // optional: where to redirect after success
+      callbackUrl: `${origin}/loading/my-enrollments`,
+    });
+  } catch (err) {
+    return res.status(500).json({ success:false, error:`Error creating order: ${err.message || JSON.stringify(err)}` });
+  }
+};
+
+// ------------- VERIFY PAYMENT (server-side) -------------
+export const verifyRazorpayPayment = async (req, res) => {
+  try {
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
+
+    // Verify signature
+    const body = `${razorpay_order_id}|${razorpay_payment_id}`;
+    const expectedSignature = crypto
+      .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
+      .update(body)
+      .digest("hex");
+
+    if (expectedSignature !== razorpay_signature) {
+      return res.status(400).json({ success:false, error:"Invalid signature" });
     }
 
-    const purchaseData = {
-      courseId: courseData._id,
-      userId: userData._id,
-      amount: (
-        courseData.coursePrice -
-        (courseData.discount * courseData.coursePrice) / 100
-      ).toFixed(2),
-    };
+    // Fetch order to read our receipt/notes (metadata)
+    const order = await razorpay.orders.fetch(razorpay_order_id);
+    const purchaseId = order.receipt;
+    const { userId, courseId } = order.notes || {};
 
-    const newPurchase = await Purchase.create(purchaseData);
+    const purchase = await Purchase.findById(purchaseId);
+    const user = await User.findById(userId);
+    const course = await Course.findById(courseId);
 
-    //Stripe payment link creation
-    const stripeInstance = new Stripe(process.env.STRIPE_SECRET_KEY);
-    const currency = process.env.CURRENCY.toLowerCase();
+    if (!purchase || !user || !course) {
+      return res.status(404).json({ success:false, error:"Purchase/User/Course not found" });
+    }
 
-    const line_items = [
-      {
-        price_data: {
-          currency,
-          product_data: {
-            name: courseData.courseTitle,
-          },
-          unit_amount: Math.floor(purchaseData.amount * 100),
-        },
-        quantity: 1,
-      },
-    ];
+    // Enroll (avoid duplicates)
+    if (!course.enrolledStudents.some(id => id.equals(user._id))) {
+      course.enrolledStudents.push(user._id);
+      await course.save();
+    }
+    if (!user.enrolledCourses.some(id => id.equals(course._id))) {
+      user.enrolledCourses.push(course._id);
+      await user.save();
+    }
 
-    const session = await stripeInstance.checkout.sessions.create({
-      success_url: `${origin}/loading/my-enrollments`,
-      cancel_url: `${origin}/`,
-      line_items: line_items,
-      mode: "payment",
-      metadata: {
-        purchaseId: newPurchase._id.toString(),
-        userId: userData._id.toString(),
-      },
-    });
+    purchase.status = "completed";
+    purchase.gatewayPaymentId = razorpay_payment_id; // optional field in your schema
+    await purchase.save();
 
-    res.status(200).json({ success: true, sessionUrl: session.url });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: `Error creating purchase link: ${error.message}`,
-    });
+    return res.status(200).json({ success:true, message:"Payment verified & enrollment done" });
+  } catch (err) {
+    return res.status(500).json({ success:false, error:`Verification error: ${err.message}` });
   }
 };
 
@@ -143,55 +253,64 @@ export const getUserCourseProgress = async (req, res) => {
     const { courseId } = req.body;
     const progressData = await CourseProgress.findOne({ userId, courseId });
 
-    res.status(200).json({success:true, progressData});
-
-
+    res.status(200).json({ success: true, progressData });
   } catch (error) {
     res
       .status(500)
-      .json({ success: false, error: `Error fetching user Progress: ${error.message}` });
+      .json({
+        success: false,
+        error: `Error fetching user Progress: ${error.message}`,
+      });
   }
-}
+};
 
 // Rating
 export const addUserRating = async (req, res) => {
   const userId = req.auth.userId;
   const { courseId, rating } = req.body;
 
-  if(!courseId || !userId || !rating || rating < 1 || rating > 5) {
-      res
+  if (!courseId || !userId || !rating || rating < 1 || rating > 5) {
+    res
       .status(500)
       .json({ success: false, error: `Invalid Details ${error.message}` });
-    } 
+  }
 
   try {
-    
     const course = await Course.findById(courseId);
 
-    if(!courseId) {
-      return res.status(404).json({success: false, message: 'Course not Found'})
+    if (!courseId) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Course not Found" });
     }
 
     const user = await User.findById(userId);
 
-    if(!user || !user.enrolledCourses.includes(courseId)) {
-      return res.status(404).json({success: false, message: 'User has not purchased this course...'})
+    if (!user || !user.enrolledCourses.includes(courseId)) {
+      return res
+        .status(404)
+        .json({
+          success: false,
+          message: "User has not purchased this course...",
+        });
     }
 
-    const existingRatingIndex = course.courseRatings.findIndex(r => r.userId === userId)
+    const existingRatingIndex = course.courseRatings.findIndex(
+      (r) => r.userId === userId
+    );
 
-    if(existingRatingIndex > -1) {
+    if (existingRatingIndex > -1) {
       course.courseRatings[existingRatingIndex].rating = rating;
     } else {
-      course.courseRatings.push({userId, rating});
+      course.courseRatings.push({ userId, rating });
     }
 
     await course.save();
 
-    res.status(200).json({success : true, message: 'Rating added'})
+    res.status(200).json({ success: true, message: "Rating added" });
   } catch (error) {
     res
       .status(500)
       .json({ success: false, error: `Error Adding Rating: ${error.message}` });
   }
-}
+};
