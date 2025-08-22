@@ -62,6 +62,7 @@ export const clerkWebhooks = async (req, res) => {
 export const razorpayWebhook = async (req, res) => {
   try {
     const webhookSignature = req.headers["x-razorpay-signature"];
+
     const expectedSignature = crypto
       .createHmac("sha256", process.env.RAZORPAY_WEBHOOK_SECRET)
       .update(JSON.stringify(req.body))

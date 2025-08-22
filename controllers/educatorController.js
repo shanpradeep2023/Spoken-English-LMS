@@ -12,12 +12,10 @@ export const updateRoleToEducator = async (req, res) => {
       },
     });
 
-    res
-      .status(200)
-      .json({
-        success: true,
-        message: "User role updated to educator successfully",
-      });
+    res.status(200).json({
+      success: true,
+      message: "User role updated to educator successfully",
+    });
   } catch (error) {
     res
       .status(400)
@@ -57,12 +55,10 @@ export const getCoursesByEducator = async (req, res) => {
     const courses = await Course.find({ educator });
     res.status(200).json({ success: true, courses });
   } catch (error) {
-    res
-      .status(500)
-      .json({
-        success: false,
-        error: `Error fetching courses: ${error.message}`,
-      });
+    res.status(500).json({
+      success: false,
+      error: `Error fetching courses: ${error.message}`,
+    });
   }
 };
 
@@ -93,7 +89,7 @@ export const educatorDashboardData = async (req, res) => {
         {
           _id: { $in: course.enrolledStudents },
         },
-        'name imageUrl'
+        "name imageUrl"
       );
       students.forEach((student) => {
         enrolledStudentsData.push({
@@ -116,12 +112,10 @@ export const educatorDashboardData = async (req, res) => {
       },
     });
   } catch (error) {
-    res
-      .status(500)
-      .json({
-        success: false,
-        error: `Error fetching educator dashboard data: ${error.message}`,
-      });
+    res.status(500).json({
+      success: false,
+      error: `Error fetching educator dashboard data: ${error.message}`,
+    });
   }
 };
 
@@ -148,11 +142,9 @@ export const getEnrolledStudentsData = async (req, res) => {
 
     res.status(200).json({ success: true, data: enrolledStudentsData });
   } catch (error) {
-    res
-      .status(500)
-      .json({
-        success: false,
-        error: `Error fetching enrolled students data: ${error.message}`,
-      });
+    res.status(500).json({
+      success: false,
+      error: `Error fetching enrolled students data: ${error.message}`,
+    });
   }
 };

@@ -5,6 +5,12 @@ import crypto from "crypto";
 import razorpay from "../configs/razorpay.js";
 import Course from "../models/Course.js";
 import CourseProgress from "../models/CourseProgress.js";
+import jwt from "jsonwebtoken";
+
+import { getAuth } from "@clerk/express";
+
+
+
 
 // Get user data
 export const getUserData = async (req, res) => {
@@ -116,18 +122,25 @@ export const userEnrolledCourses = async (req, res) => {
 export const purchaseLink = async (req, res) => {
   try {
     const { courseId } = req.body;
-    const userId = req.auth.userId;             // Clerk
+    const userId = req.auth.userId; // Clerk
     const origin = req.headers.origin || "http://localhost:3000";
 
     const user = await User.findById(userId);
     const course = await Course.findById(courseId);
-    if (!user) return res.status(404).json({ success:false, error:"User not found" });
-    if (!course) return res.status(404).json({ success:false, error:"Course not found" });
+    if (!user)
+      return res.status(404).json({ success: false, error: "User not found" });
+    if (!course)
+      return res
+        .status(404)
+        .json({ success: false, error: "Course not found" });
 
     const amountNumber = Number(
-      (course.coursePrice - (course.discount * course.coursePrice)/100).toFixed(2)
+      (
+        course.coursePrice -
+        (course.discount * course.coursePrice) / 100
+      ).toFixed(2)
     );
-    const amountPaise = Math.round(amountNumber * 100);   // Razorpay expects integer subunits
+    const amountPaise = Math.round(amountNumber * 100); // Razorpay expects integer subunits
 
     // Create a pending Purchase
     const purchase = await Purchase.create({
@@ -141,7 +154,7 @@ export const purchaseLink = async (req, res) => {
     const order = await razorpay.orders.create({
       amount: amountPaise,
       currency: process.env.CURRENCY || "INR",
-      receipt: purchase._id.toString(),         // store purchaseId here
+      receipt: purchase._id.toString(), // store purchaseId here
       notes: {
         userId: user._id.toString(),
         courseId: course._id.toString(),
@@ -156,19 +169,23 @@ export const purchaseLink = async (req, res) => {
         amount: order.amount,
         currency: order.currency,
       },
-      keyId: process.env.RAZORPAY_KEY_ID,       // needed by Razorpay Checkout
+      keyId: process.env.RAZORPAY_KEY_ID, // needed by Razorpay Checkout
       // optional: where to redirect after success
-      callbackUrl: `${origin}/loading/my-enrollments`,
+      callbackUrl: `${origin}/dashboard/student`,
     });
   } catch (err) {
-    return res.status(500).json({ success:false, error:`Error creating order: ${err.message || JSON.stringify(err)}` });
+    return res.status(500).json({
+      success: false,
+      error: `Error creating order: ${err.message || JSON.stringify(err)}`,
+    });
   }
 };
 
 // ------------- VERIFY PAYMENT (server-side) -------------
 export const verifyRazorpayPayment = async (req, res) => {
   try {
-    const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature } =
+      req.body;
 
     // Verify signature
     const body = `${razorpay_order_id}|${razorpay_payment_id}`;
@@ -178,7 +195,9 @@ export const verifyRazorpayPayment = async (req, res) => {
       .digest("hex");
 
     if (expectedSignature !== razorpay_signature) {
-      return res.status(400).json({ success:false, error:"Invalid signature" });
+      return res
+        .status(400)
+        .json({ success: false, error: "Invalid signature" });
     }
 
     // Fetch order to read our receipt/notes (metadata)
@@ -191,26 +210,30 @@ export const verifyRazorpayPayment = async (req, res) => {
     const course = await Course.findById(courseId);
 
     if (!purchase || !user || !course) {
-      return res.status(404).json({ success:false, error:"Purchase/User/Course not found" });
+      return res
+        .status(404)
+        .json({ success: false, error: "Purchase/User/Course not found" });
     }
 
     // Enroll (avoid duplicates)
-    if (!course.enrolledStudents.some(id => id.equals(user._id))) {
-      course.enrolledStudents.push(user._id);
-      await course.save();
-    }
-    if (!user.enrolledCourses.some(id => id.equals(course._id))) {
-      user.enrolledCourses.push(course._id);
-      await user.save();
-    }
+
+    course.enrolledStudents.push(user._id);
+    await course.save();
+
+    user.enrolledCourses.push(course._id);
+    await user.save();
 
     purchase.status = "completed";
     purchase.gatewayPaymentId = razorpay_payment_id; // optional field in your schema
     await purchase.save();
 
-    return res.status(200).json({ success:true, message:"Payment verified & enrollment done" });
+    return res
+      .status(200)
+      .json({ success: true, message: "Payment verified & enrollment done" });
   } catch (err) {
-    return res.status(500).json({ success:false, error:`Verification error: ${err.message}` });
+    return res
+      .status(500)
+      .json({ success: false, error: `Verification error: ${err.message}` });
   }
 };
 
@@ -255,12 +278,10 @@ export const getUserCourseProgress = async (req, res) => {
 
     res.status(200).json({ success: true, progressData });
   } catch (error) {
-    res
-      .status(500)
-      .json({
-        success: false,
-        error: `Error fetching user Progress: ${error.message}`,
-      });
+    res.status(500).json({
+      success: false,
+      error: `Error fetching user Progress: ${error.message}`,
+    });
   }
 };
 
@@ -287,12 +308,10 @@ export const addUserRating = async (req, res) => {
     const user = await User.findById(userId);
 
     if (!user || !user.enrolledCourses.includes(courseId)) {
-      return res
-        .status(404)
-        .json({
-          success: false,
-          message: "User has not purchased this course...",
-        });
+      return res.status(404).json({
+        success: false,
+        message: "User has not purchased this course...",
+      });
     }
 
     const existingRatingIndex = course.courseRatings.findIndex(
@@ -314,3 +333,44 @@ export const addUserRating = async (req, res) => {
       .json({ success: false, error: `Error Adding Rating: ${error.message}` });
   }
 };
+
+
+
+export const getSignedVideoToken = async (req, res) => {
+  try {
+    const { userId } = getAuth(req); 
+    const { courseId, videoId } = req.body;
+
+    //  Check if user is enrolled
+    const user = await User.findById(userId);
+    if (!user || !user.enrolledCourses.includes(courseId)) {
+      return res.status(403).json({
+        success: false,
+        error: "Access denied. Not enrolled in course.",
+      });
+    }
+
+    //  Short-lived token (2 minutes)
+    const exp = Math.floor(Date.now() / 1000) + 120;
+
+    const payload = {
+      sub: videoId, // Cloudflare video UID
+      kid: process.env.CLOUDFLARE_STREAM_KEY_ID, // Signing Key ID from Cloudflare
+      exp,
+    };
+
+    const token = jwt.sign(payload, process.env.CLOUDFLARE_STREAM_SIGNING_KEY, {
+      algorithm: "RS256",
+    });
+
+    const videoUrl = `https://videodelivery.net/${videoId}/manifest/video.m3u8?token=${token}`;
+
+    return res.status(200).json({ success: true, videoUrl, exp });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      error: `Error generating video token: ${error.message}`,
+    });
+  }
+};
+

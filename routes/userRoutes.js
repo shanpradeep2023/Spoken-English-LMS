@@ -1,6 +1,7 @@
 import express from "express";
 import {
   addUserRating,
+  getSignedVideoToken,
   getUserCourseProgress,
   getUserData,
   purchaseLink,
@@ -27,5 +28,8 @@ userRouter.get("/get-course-progress", requireAuth(), getUserCourseProgress);
 
 // Rating
 userRouter.post("/add-rating", requireAuth(), addUserRating);
+
+// Get signed video token
+userRouter.post("/video/token", requireAuth(), getSignedVideoToken);
 
 export default userRouter;
