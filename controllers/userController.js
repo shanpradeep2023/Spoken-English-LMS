@@ -119,6 +119,69 @@ export const userEnrolledCourses = async (req, res) => {
 // };
 
 // ------------- CREATE ORDER (instead of Stripe session) -------------
+// export const purchaseLink = async (req, res) => {
+//   try {
+//     const { courseId } = req.body;
+//     const userId = req.auth.userId; // Clerk
+//     const origin = req.headers.origin || "http://localhost:3000";
+
+//     const user = await User.findById(userId);
+//     const course = await Course.findById(courseId);
+//     if (!user)
+//       return res.status(404).json({ success: false, error: "User not found" });
+//     if (!course)
+//       return res
+//         .status(404)
+//         .json({ success: false, error: "Course not found" });
+
+//     const amountNumber = Number(
+//       (
+//         course.coursePrice -
+//         (course.discount * course.coursePrice) / 100
+//       ).toFixed(2)
+//     );
+//     const amountPaise = Math.round(amountNumber * 100); // Razorpay expects integer subunits
+
+//     // Create a pending Purchase
+//     const purchase = await Purchase.create({
+//       courseId: course._id,
+//       userId: user._id,
+//       amount: amountNumber,
+//       status: "pending",
+//     });
+
+//     // Create Razorpay order
+//     const order = await razorpay.orders.create({
+//       amount: amountPaise,
+//       currency: process.env.CURRENCY || "INR",
+//       receipt: purchase._id.toString(), // store purchaseId here
+//       notes: {
+//         userId: user._id.toString(),
+//         courseId: course._id.toString(),
+//       },
+//     });
+
+//     // Return order details to frontend
+//     return res.status(200).json({
+//       success: true,
+//       order: {
+//         id: order.id,
+//         amount: order.amount,
+//         currency: order.currency,
+//       },
+//       keyId: process.env.RAZORPAY_KEY_ID, // needed by Razorpay Checkout
+//       // optional: where to redirect after success
+//       callbackUrl: `${origin}/dashboard/student`,
+//     });
+//   } catch (err) {
+//     return res.status(500).json({
+//       success: false,
+//       error: `Error creating order: ${err.message || JSON.stringify(err)}`,
+//     });
+//   }
+// };
+
+
 export const purchaseLink = async (req, res) => {
   try {
     const { courseId } = req.body;
@@ -127,6 +190,7 @@ export const purchaseLink = async (req, res) => {
 
     const user = await User.findById(userId);
     const course = await Course.findById(courseId);
+
     if (!user)
       return res.status(404).json({ success: false, error: "User not found" });
     if (!course)
@@ -142,26 +206,34 @@ export const purchaseLink = async (req, res) => {
     );
     const amountPaise = Math.round(amountNumber * 100); // Razorpay expects integer subunits
 
-    // Create a pending Purchase
-    const purchase = await Purchase.create({
-      courseId: course._id,
-      userId: user._id,
-      amount: amountNumber,
-      status: "pending",
-    });
+    // 🔍 Check if a pending purchase already exists
+    let purchase = await Purchase.findOne({ courseId, userId, status: "pending" });
+
+    if (!purchase) {
+      // If no pending purchase, create a new one
+      purchase = await Purchase.create({
+        courseId: course._id,
+        userId: user._id,
+        amount: amountNumber,
+        status: "pending",
+      });
+    } else {
+      // If pending exists, update the amount in case discount changed
+      purchase.amount = amountNumber;
+      await purchase.save();
+    }
 
     // Create Razorpay order
     const order = await razorpay.orders.create({
       amount: amountPaise,
       currency: process.env.CURRENCY || "INR",
-      receipt: purchase._id.toString(), // store purchaseId here
+      receipt: purchase._id.toString(), // link Razorpay order with Purchase doc
       notes: {
         userId: user._id.toString(),
         courseId: course._id.toString(),
       },
     });
 
-    // Return order details to frontend
     return res.status(200).json({
       success: true,
       order: {
@@ -169,8 +241,7 @@ export const purchaseLink = async (req, res) => {
         amount: order.amount,
         currency: order.currency,
       },
-      keyId: process.env.RAZORPAY_KEY_ID, // needed by Razorpay Checkout
-      // optional: where to redirect after success
+      keyId: process.env.RAZORPAY_KEY_ID,
       callbackUrl: `${origin}/dashboard/student`,
     });
   } catch (err) {
@@ -180,6 +251,7 @@ export const purchaseLink = async (req, res) => {
     });
   }
 };
+
 
 // ------------- VERIFY PAYMENT (server-side) -------------
 export const verifyRazorpayPayment = async (req, res) => {

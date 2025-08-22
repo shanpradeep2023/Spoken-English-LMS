@@ -20,4 +20,4 @@ educatorRouter.get('/enrolled-students', requireAuth() , protectEducator, getEnr
 // educatorRouter.get('/get-courses' , protectEducator, getCoursesByEducator);
 // educatorRouter.get('/dashboard' , protectEducator, educatorDashboardData);
 // educatorRouter.get('/enrolled-students' , protectEducator, getEnrolledStudentsData);
-export default educatorRouter;
+export default educatorRouter;                                                                                                                                                              

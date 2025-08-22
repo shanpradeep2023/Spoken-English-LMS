@@ -1,15 +1,37 @@
 import Purchase from "../models/Purchase.js";
 
-// Middleware to verify if the user has already purchased the course
 export const verifyIfCourseAlreadyPurchased = async (req, res, next) => {
   try {
     const { courseId } = req.body;
     const userId = req.auth.userId;
 
-    const purchase = await Purchase.findOne({ courseId, userId });
+    // Get latest purchase attempt
+    const purchase = await Purchase.findOne({ courseId, userId }).sort({ createdAt: -1 });
 
     if (purchase) {
-      return res.status(400).json({ success: false, message: "Course already purchased" });
+      switch (purchase.status) {
+        case "completed":
+          return res.status(409).json({
+            success: false,
+            message: "Course already purchased.",
+          });
+
+        case "pending":
+          return res.status(402).json({
+            success: false,
+            message:
+              "Your payment is still pending. If the amount was debited, please contact support.",
+          });
+
+        case "failed":
+          // Optionally clean failed purchase
+          await Purchase.deleteOne({ _id: purchase._id });
+          break;
+
+        default:
+          console.warn(`Unexpected purchase status: ${purchase.status}`);
+          break;
+      }
     }
 
     next();
@@ -18,3 +40,4 @@ export const verifyIfCourseAlreadyPurchased = async (req, res, next) => {
     res.status(500).json({ message: "Internal server error" });
   }
 };
+
