@@ -16,15 +16,27 @@ export const verifyIfCourseAlreadyPurchased = async (req, res, next) => {
             message: "Course already purchased.",
           });
 
-        case "pending":
-          return res.status(402).json({
-            success: false,
-            message:
-              "Your payment is still pending. If the amount was debited, please contact support.",
-          });
+        case "pending": {
+          const now = new Date();
+          const purchaseAgeMinutes =
+            (now.getTime() - purchase.createdAt.getTime()) / (1000 * 60);
+
+          if (purchaseAgeMinutes > 15) {
+            // assume stale pending order → allow retry
+            await Purchase.deleteOne({ _id: purchase._id });
+            break;
+          } else {
+            // still fresh pending order
+            return res.status(402).json({
+              success: false,
+              message:
+                "Your payment is still pending. If the amount was debited, please contact support. If you still want to continue, please retry the payment after 15 minutes.",
+            });
+          }
+        }
 
         case "failed":
-          // Optionally clean failed purchase
+          // Clean failed purchase and allow retry
           await Purchase.deleteOne({ _id: purchase._id });
           break;
 
@@ -40,4 +52,3 @@ export const verifyIfCourseAlreadyPurchased = async (req, res, next) => {
     res.status(500).json({ message: "Internal server error" });
   }
 };
-

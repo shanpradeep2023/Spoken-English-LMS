@@ -9,14 +9,11 @@ import jwt from "jsonwebtoken";
 
 import { getAuth } from "@clerk/express";
 
-
-
-
 // Get user data
 export const getUserData = async (req, res) => {
   try {
     const userId = req.auth.userId;
-    console.log(userId);
+    //console.log(userId);
     const user = await User.findById(userId);
 
     if (!user) {
@@ -56,7 +53,7 @@ export const userEnrolledCourses = async (req, res) => {
 //     const origin = req.headers.origin || "http://localhost:3000";
 //     const userId = req.auth.userId;
 
-// console.log(userId, courseId);
+//     console.log(userId, courseId);
 
 //     const userData = await User.findById(userId);
 //     const courseData = await Course.findById(courseId);
@@ -118,7 +115,79 @@ export const userEnrolledCourses = async (req, res) => {
 //   }
 // };
 
-// ------------- CREATE ORDER (instead of Stripe session) -------------
+//------------- CREATE ORDER (instead of Stripe session) -------------
+export const purchaseLink = async (req, res) => {
+  try {
+    const { courseId } = req.body;
+    const userId = req.auth.userId; // 👈 updated for Clerk
+    const origin = req.headers.origin || "http://localhost:3000";
+
+    const user = await User.findById(userId);
+    const course = await Course.findById(courseId);
+    if (!user)
+      return res.status(404).json({ success: false, error: "User not found" });
+    if (!course)
+      return res
+        .status(404)
+        .json({ success: false, error: "Course not found" });
+
+    const amountNumber = Number(
+      (
+        course.coursePrice -
+        (course.discount * course.coursePrice) / 100
+      ).toFixed(2)
+    );
+    const amountPaise = Math.round(amountNumber * 100);
+
+    // Create a pending Purchase
+    const purchase = await Purchase.create({
+      courseId: course._id,
+      userId: user._id,
+      amount: amountNumber,
+      status: "pending",
+    });
+
+    // Razorpay order creation
+    let order;
+    try {
+      order = await razorpay.orders.create({
+        amount: amountPaise,
+        currency: process.env.CURRENCY || "INR",
+        receipt: purchase._id.toString(),
+        notes: {
+          userId: user._id.toString(),
+          courseId: course._id.toString(),
+        },
+      });
+    } catch (error) {
+      return res.status(500).json({
+        success: false,
+        error: `Error creating Razorpay order: ${
+          error.message || JSON.stringify(error)
+        }`,
+      });
+    }
+
+    // Return order details
+    return res.status(200).json({
+      success: true,
+      order: {
+        id: order.id,
+        amount: order.amount,
+        currency: order.currency,
+      },
+      keyId: process.env.RAZORPAY_KEY_ID,
+      callbackUrl: `${origin}/dashboard/student`,
+    });
+  } catch (err) {
+    //console.error("purchaseLink error:", err);
+    return res.status(500).json({
+      success: false,
+      error: `Error creating order: ${err.message || JSON.stringify(err)}`,
+    });
+  }
+};
+
 // export const purchaseLink = async (req, res) => {
 //   try {
 //     const { courseId } = req.body;
@@ -127,6 +196,7 @@ export const userEnrolledCourses = async (req, res) => {
 
 //     const user = await User.findById(userId);
 //     const course = await Course.findById(courseId);
+
 //     if (!user)
 //       return res.status(404).json({ success: false, error: "User not found" });
 //     if (!course)
@@ -142,26 +212,34 @@ export const userEnrolledCourses = async (req, res) => {
 //     );
 //     const amountPaise = Math.round(amountNumber * 100); // Razorpay expects integer subunits
 
-//     // Create a pending Purchase
-//     const purchase = await Purchase.create({
-//       courseId: course._id,
-//       userId: user._id,
-//       amount: amountNumber,
-//       status: "pending",
-//     });
+//     // 🔍 Check if a pending purchase already exists
+//     let purchase = await Purchase.findOne({ courseId, userId, status: "pending" });
+
+//     if (!purchase) {
+//       // If no pending purchase, create a new one
+//       purchase = await Purchase.create({
+//         courseId: course._id,
+//         userId: user._id,
+//         amount: amountNumber,
+//         status: "pending",
+//       });
+//     } else {
+//       // If pending exists, update the amount in case discount changed
+//       purchase.amount = amountNumber;
+//       await purchase.save();
+//     }
 
 //     // Create Razorpay order
 //     const order = await razorpay.orders.create({
 //       amount: amountPaise,
 //       currency: process.env.CURRENCY || "INR",
-//       receipt: purchase._id.toString(), // store purchaseId here
+//       receipt: purchase._id.toString(), // link Razorpay order with Purchase doc
 //       notes: {
 //         userId: user._id.toString(),
 //         courseId: course._id.toString(),
 //       },
 //     });
 
-//     // Return order details to frontend
 //     return res.status(200).json({
 //       success: true,
 //       order: {
@@ -169,8 +247,7 @@ export const userEnrolledCourses = async (req, res) => {
 //         amount: order.amount,
 //         currency: order.currency,
 //       },
-//       keyId: process.env.RAZORPAY_KEY_ID, // needed by Razorpay Checkout
-//       // optional: where to redirect after success
+//       keyId: process.env.RAZORPAY_KEY_ID,
 //       callbackUrl: `${origin}/dashboard/student`,
 //     });
 //   } catch (err) {
@@ -181,79 +258,7 @@ export const userEnrolledCourses = async (req, res) => {
 //   }
 // };
 
-
-export const purchaseLink = async (req, res) => {
-  try {
-    const { courseId } = req.body;
-    const userId = req.auth.userId; // Clerk
-    const origin = req.headers.origin || "http://localhost:3000";
-
-    const user = await User.findById(userId);
-    const course = await Course.findById(courseId);
-
-    if (!user)
-      return res.status(404).json({ success: false, error: "User not found" });
-    if (!course)
-      return res
-        .status(404)
-        .json({ success: false, error: "Course not found" });
-
-    const amountNumber = Number(
-      (
-        course.coursePrice -
-        (course.discount * course.coursePrice) / 100
-      ).toFixed(2)
-    );
-    const amountPaise = Math.round(amountNumber * 100); // Razorpay expects integer subunits
-
-    // 🔍 Check if a pending purchase already exists
-    let purchase = await Purchase.findOne({ courseId, userId, status: "pending" });
-
-    if (!purchase) {
-      // If no pending purchase, create a new one
-      purchase = await Purchase.create({
-        courseId: course._id,
-        userId: user._id,
-        amount: amountNumber,
-        status: "pending",
-      });
-    } else {
-      // If pending exists, update the amount in case discount changed
-      purchase.amount = amountNumber;
-      await purchase.save();
-    }
-
-    // Create Razorpay order
-    const order = await razorpay.orders.create({
-      amount: amountPaise,
-      currency: process.env.CURRENCY || "INR",
-      receipt: purchase._id.toString(), // link Razorpay order with Purchase doc
-      notes: {
-        userId: user._id.toString(),
-        courseId: course._id.toString(),
-      },
-    });
-
-    return res.status(200).json({
-      success: true,
-      order: {
-        id: order.id,
-        amount: order.amount,
-        currency: order.currency,
-      },
-      keyId: process.env.RAZORPAY_KEY_ID,
-      callbackUrl: `${origin}/dashboard/student`,
-    });
-  } catch (err) {
-    return res.status(500).json({
-      success: false,
-      error: `Error creating order: ${err.message || JSON.stringify(err)}`,
-    });
-  }
-};
-
-
-// ------------- VERIFY PAYMENT (server-side) -------------
+// // ------------- VERIFY PAYMENT (server-side) -------------
 export const verifyRazorpayPayment = async (req, res) => {
   try {
     const { razorpay_order_id, razorpay_payment_id, razorpay_signature } =
@@ -406,11 +411,9 @@ export const addUserRating = async (req, res) => {
   }
 };
 
-
-
 export const getSignedVideoToken = async (req, res) => {
   try {
-    const { userId } = getAuth(req); 
+    const { userId } = getAuth(req);
     const { courseId, videoId } = req.body;
 
     //  Check if user is enrolled
@@ -446,3 +449,54 @@ export const getSignedVideoToken = async (req, res) => {
   }
 };
 
+// Dev Manual Route
+// In userController.js (or a new adminController.js if you want restricted routes)
+
+// ⚠️ Make sure only you (admin) can call this API – do NOT expose to normal users
+export const manualEnrollUser = async (req, res) => {
+  try {
+    const { userId, courseId } = req.body;
+
+    const user = await User.findById(userId);
+    const course = await Course.findById(courseId);
+
+    if (!user)
+      return res.status(404).json({ success: false, error: "User not found" });
+    if (!course)
+      return res
+        .status(404)
+        .json({ success: false, error: "Course not found" });
+
+    // Already enrolled?
+    if (user.enrolledCourses.includes(course._id)) {
+      return res
+        .status(200)
+        .json({ success: true, message: "User already enrolled" });
+    }
+
+    // Create a completed purchase record for audit trail
+    await Purchase.create({
+      courseId: course._id,
+      userId: user._id,
+      amount: course.coursePrice - (course.discount * course.coursePrice) / 100,
+      status: "completed",
+      gatewayPaymentId: "manual-" + Date.now(), // marker so you know this was manual
+    });
+
+    // Enroll user
+    user.enrolledCourses.push(course._id);
+    course.enrolledStudents.push(user._id);
+
+    await user.save();
+    await course.save();
+
+    return res
+      .status(200)
+      .json({ success: true, message: "User manually enrolled" });
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      error: `Error manually enrolling user: ${err.message}`,
+    });
+  }
+};
